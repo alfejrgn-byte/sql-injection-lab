@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 3: Blind SQLi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 3: Blind SQLi <span class="difficulty">★★★☆☆</span></h1>
+              <p class="hero-copy">응답 내용이 거의 없더라도, 참/거짓의 차이만으로 내부 데이터를 추론할 수 있습니다.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="3">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">사용자 존재 여부만 알 수 있습니다. 참/거짓 응답만으로 비밀 데이터를 추출하세요.</p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">숫자처럼 보이는 ID 자리에 조건식을 주입해 응답 변화를 관찰하세요.</p>
+
+          <form id="blindForm" class="field-grid">
+            <div class="field">
+              <label for="userId">사용자 ID</label>
+              <input id="userId" name="userId" type="text" value="1" autocomplete="off" />
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">확인</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">이 API는 존재 여부만 반환합니다. 자동화 예시는 힌트 4단계에 있습니다.</p>
+          <div class="result-area">
+            <div id="resultMessage" class="empty-state">아직 확인되지 않았습니다.</div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">추론이 끝났다면 FLAG를 제출하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 3;
+        const form = document.getElementById("blindForm");
+        const userIdInput = document.getElementById("userId");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const resultMessage = document.getElementById("resultMessage");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+
+        function updateSql(queryOverride) {
+          const userId = userIdInput.value;
+          const query = queryOverride || `SELECT id FROM users WHERE id=${userId} AND is_active=1`;
+          sqlDisplay.innerHTML = highlightSQL(query, userId);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        async function runCheck() {
+          const userId = userIdInput.value;
+          const response = await apiCall(`/api/lab3-blind?id=${encodeURIComponent(userId)}`);
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+
+          if (!response._ok) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = response.error || "요청 처리 중 오류가 발생했습니다.";
+            return;
+          }
+
+          resultMessage.className = response.exists ? "success-box" : "notice-box warning";
+          resultMessage.textContent = response.exists
+            ? "사용자가 존재합니다. 현재 조건은 참입니다."
+            : "사용자를 찾을 수 없습니다. 현재 조건은 거짓입니다.";
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await runCheck();
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        userIdInput.addEventListener("input", () => updateSql());
+
+        initHints(labId);
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+        runCheck();
+      });
+    </script>
+  </body>
+</html>

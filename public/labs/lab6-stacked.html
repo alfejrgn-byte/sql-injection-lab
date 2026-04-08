@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 6: Stacked Queries — SQLi Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 6: Stacked Queries <span class="difficulty">★★★★☆</span></h1>
+              <p class="hero-copy">문자열 안에 한 문장만 들어간다고 가정한 INSERT 구문을 깨고, 추가 SQL을 이어 실행해 보세요.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="6">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">세미콜론(;)으로 추가 SQL 문을 실행할 수 있습니다. INSERT 뒤에 SELECT나 UPDATE를 추가해보세요.</p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">로그 제목은 작은따옴표로 감싸져 INSERT 문에 들어갑니다. 문자열을 닫고 새 문장을 이어 보세요.</p>
+
+          <form id="stackedForm" class="field-grid">
+            <div class="field">
+              <label for="logTitle">로그 제목</label>
+              <input
+                id="logTitle"
+                name="logTitle"
+                type="text"
+                placeholder="예: 보고서 저장"
+                autocomplete="off"
+              />
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">저장</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">기본적으로는 <code>admin_logs</code> 갱신 결과가, 추가 문장이 실행되면 별도 결과 세트가 함께 표시됩니다.</p>
+          <div class="result-area result-stack">
+            <div id="resultMessage" class="empty-state">아직 로그를 저장하지 않았습니다.</div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+            <div>
+              <h3 class="panel-title" style="margin-bottom: 12px;">admin_logs</h3>
+              <div id="adminLogsTable"></div>
+            </div>
+            <div id="executionResultsSection" style="display: none;">
+              <h3 class="panel-title" style="margin-bottom: 12px;">추가 실행 결과</h3>
+              <div id="executionResultsContainer" class="result-stack"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">추가 쿼리 실행에 성공했다면 FLAG를 제출하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 6;
+        const form = document.getElementById("stackedForm");
+        const logTitleInput = document.getElementById("logTitle");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const resultMessage = document.getElementById("resultMessage");
+        const adminLogsTable = document.getElementById("adminLogsTable");
+        const executionResultsSection = document.getElementById("executionResultsSection");
+        const executionResultsContainer = document.getElementById("executionResultsContainer");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+
+        function updateSql(queryOverride) {
+          const logTitle = logTitleInput.value;
+          const query =
+            queryOverride ||
+            `INSERT INTO admin_logs (action, details, created_at) VALUES ('POST', '${logTitle}', datetime('now'))`;
+          sqlDisplay.innerHTML = highlightSQL(query, logTitle);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        function getErrorMessage(response) {
+          if (response.error === true) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          if (typeof response.error === "string" && response.error) {
+            return response.error;
+          }
+
+          if (response._ok === false) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          return "";
+        }
+
+        function maybeRevealFlag(payload) {
+          const match = JSON.stringify(payload || {}).match(/FLAG\{[^}]+\}/);
+
+          if (match) {
+            showFlagModal(match[0], labId);
+            refreshSavedFlag();
+          }
+        }
+
+        function renderExecutionResults(resultSets) {
+          if (!Array.isArray(resultSets) || !resultSets.length) {
+            executionResultsSection.style.display = "none";
+            executionResultsContainer.innerHTML = "";
+            return;
+          }
+
+          executionResultsSection.style.display = "block";
+          executionResultsContainer.innerHTML = resultSets
+            .map(
+              (resultSet, index) => `
+                <article class="metric-card">
+                  <div class="info-row" style="margin-bottom: 12px;">
+                    <strong style="margin: 0; font-size: 1rem;">결과 세트 ${index + 1}</strong>
+                    <span class="meta-label">${Array.isArray(resultSet?.columns) ? resultSet.columns.length : 0}개 컬럼</span>
+                  </div>
+                  <div id="executionTable${index}"></div>
+                </article>
+              `
+            )
+            .join("");
+
+          resultSets.forEach((resultSet, index) => {
+            renderTable(resultSet?.rows || [], document.getElementById(`executionTable${index}`));
+          });
+        }
+
+        async function runInsert() {
+          const title = logTitleInput.value;
+          const response = await apiCall("/api/lab6-stacked", {
+            method: "POST",
+            body: { title }
+          });
+          const errorMessage = getErrorMessage(response);
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+          renderTable(response.adminLogs || [], adminLogsTable);
+          renderExecutionResults(response.executionResults || []);
+
+          if (errorMessage) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = errorMessage;
+            return;
+          }
+
+          resultMessage.className = "success-box";
+          resultMessage.textContent = response.message || "로그가 기록되었습니다.";
+          maybeRevealFlag(response);
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await runInsert();
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        logTitleInput.addEventListener("input", () => updateSql());
+
+        initHints(labId);
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+        renderTable([], adminLogsTable);
+      });
+    </script>
+  </body>
+</html>

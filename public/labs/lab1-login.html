@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 1: 로그인 우회</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 1: 로그인 우회 <span class="difficulty">★☆☆☆☆</span></h1>
+              <p class="hero-copy">인증 쿼리의 문자열 결합 구조를 이용해 관리자 계정으로 로그인해 보세요.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="1">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">관리자 계정으로 로그인하세요. 비밀번호를 모른 채로 인증을 우회할 수 있을까요?</p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">기본 계정을 모르더라도, SQL 구조를 바꾸면 조건 전체를 우회할 수 있습니다.</p>
+
+          <form id="loginForm" class="field-grid">
+            <div class="field">
+              <label for="username">Username</label>
+              <input id="username" name="username" type="text" placeholder="admin" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="password">Password</label>
+              <input id="password" name="password" type="text" placeholder="비밀번호 또는 페이로드" autocomplete="off" />
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">로그인</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">서버 응답과 사용자 정보를 확인하세요.</p>
+          <div class="result-area">
+            <div id="resultMessage" class="empty-state">아직 요청을 보내지 않았습니다.</div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+            <div id="resultTable"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">실습을 완료했다면 FLAG를 제출해 진행률을 저장하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 1;
+        const form = document.getElementById("loginForm");
+        const usernameInput = document.getElementById("username");
+        const passwordInput = document.getElementById("password");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const resultMessage = document.getElementById("resultMessage");
+        const resultTable = document.getElementById("resultTable");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+
+        function updateSql(queryOverride) {
+          const username = usernameInput.value;
+          const password = passwordInput.value;
+          const query =
+            queryOverride ||
+            `SELECT * FROM users WHERE username='${username}' AND password='${password}'`;
+          sqlDisplay.innerHTML = highlightSQL(query, [username, password]);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+
+          const username = usernameInput.value;
+          const password = passwordInput.value;
+          const response = await apiCall("/api/lab1-login", {
+            method: "POST",
+            body: { username, password }
+          });
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+
+          if (!response._ok) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = response.error || "요청 처리 중 오류가 발생했습니다.";
+            resultTable.innerHTML = "";
+            return;
+          }
+
+          resultMessage.className = response.success ? "success-box" : "notice-box warning";
+          resultMessage.textContent = response.message || "응답이 도착했습니다.";
+
+          if (response.user) {
+            renderTable([response.user], resultTable);
+          } else {
+            resultTable.innerHTML = '<div class="empty-state">반환된 사용자 정보가 없습니다.</div>';
+          }
+
+          if (response.flag || response.user?.role === "admin") {
+            showFlagModal(response.flag || FLAGS[labId], labId);
+            refreshSavedFlag();
+          }
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        usernameInput.addEventListener("input", () => updateSql());
+        passwordInput.addEventListener("input", () => updateSql());
+
+        initHints(labId);
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+      });
+    </script>
+  </body>
+</html>

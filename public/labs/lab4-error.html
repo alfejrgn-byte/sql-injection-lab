@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 4: Error 기반 추출 — SQLi Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 4: Error 기반 추출 <span class="difficulty">★★★☆☆</span></h1>
+              <p class="hero-copy">에러 메시지 안에 숨어 있는 힌트를 이용해 원래 보이지 않던 데이터를 끌어내 보세요.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="4">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">에러 메시지에서 유용한 정보를 추출하세요. 의도적으로 SQL 에러를 발생시켜 보세요.</p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">숫자 ID처럼 보이는 값도 SQL 식 전체로 평가됩니다. 정상 조회와 에러 유도를 모두 시도해 보세요.</p>
+
+          <form id="errorForm" class="field-grid">
+            <div class="field">
+              <label for="productId">상품 ID</label>
+              <input id="productId" name="productId" type="text" value="1" autocomplete="off" />
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">조회</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">정상 응답이면 상품 카드가, 에러 유도에 성공하면 에러 메시지가 표시됩니다.</p>
+          <div class="result-area">
+            <div id="resultMessage" class="empty-state">기본 상품을 조회해 보거나 에러를 유도해 보세요.</div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+            <div id="productCard"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">에러를 이용해 원하는 데이터를 찾았다면 FLAG를 제출하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 4;
+        const form = document.getElementById("errorForm");
+        const productIdInput = document.getElementById("productId");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const resultMessage = document.getElementById("resultMessage");
+        const productCard = document.getElementById("productCard");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+
+        function updateSql(queryOverride) {
+          const productId = productIdInput.value;
+          const query = queryOverride || `SELECT * FROM products WHERE id=${productId}`;
+          sqlDisplay.innerHTML = highlightSQL(query, productId);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        function getErrorMessage(response) {
+          if (response.error === true) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          if (typeof response.error === "string" && response.error) {
+            return response.error;
+          }
+
+          if (response._ok === false) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          return "";
+        }
+
+        function maybeRevealFlag(payload) {
+          const match = JSON.stringify(payload || {}).match(/FLAG\{[^}]+\}/);
+
+          if (match) {
+            showFlagModal(match[0], labId);
+            refreshSavedFlag();
+          }
+        }
+
+        function formatPrice(value) {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) ? `$${numeric.toFixed(2)}` : escapeHtml(value ?? "-");
+        }
+
+        function renderProduct(product) {
+          if (!product) {
+            productCard.innerHTML = '<div class="empty-state">표시할 상품 정보가 없습니다.</div>';
+            return;
+          }
+
+          productCard.innerHTML = `
+            <article class="metric-card">
+              <div class="info-row">
+                <div>
+                  <div class="meta-label">상품명</div>
+                  <strong style="margin-top: 10px; font-size: 1.4rem; line-height: 1.3;">
+                    ${escapeHtml(product.name || "-")}
+                  </strong>
+                </div>
+                <span class="status-badge">${escapeHtml(product.category || "미분류")}</span>
+              </div>
+              <p class="panel-subtitle" style="margin: 16px 0 12px;">
+                ${escapeHtml(product.description || "설명이 없습니다.")}
+              </p>
+              <div class="pill-row">
+                <span class="pill">ID ${escapeHtml(product.id ?? "-")}</span>
+                <span class="pill">가격 ${formatPrice(product.price)}</span>
+              </div>
+            </article>
+          `;
+        }
+
+        async function runLookup() {
+          const productId = productIdInput.value;
+          const response = await apiCall(`/api/lab4-error?id=${encodeURIComponent(productId)}`);
+          const product = response.product || response.rows?.[0] || null;
+          const errorMessage = getErrorMessage(response);
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+
+          if (errorMessage) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = errorMessage;
+            renderProduct(null);
+            maybeRevealFlag(response);
+            return;
+          }
+
+          if (!product) {
+            resultMessage.className = "notice-box warning";
+            resultMessage.textContent = "조건에 맞는 상품이 없습니다.";
+            renderProduct(null);
+            return;
+          }
+
+          resultMessage.className = "success-box";
+          resultMessage.textContent = "상품 정보를 확인했습니다.";
+          renderProduct(product);
+          maybeRevealFlag(response);
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await runLookup();
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        productIdInput.addEventListener("input", () => updateSql());
+
+        initHints(labId);
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+        runLookup();
+      });
+    </script>
+  </body>
+</html>

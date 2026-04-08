@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SQL Injection 이론 가이드</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div class="brand">
+              <img class="brand-logo" src="/assets/logo.svg" alt="SQL Injection Lab 로고" />
+              <div>
+                <p class="eyebrow">Theory Guide</p>
+                <h1>SQL Injection 이론 가이드</h1>
+                <p class="hero-copy">실습에 들어가기 전에 알아야 할 핵심 개념, SQLite 특성, 방어 방법을 빠르게 정리한 페이지입니다.</p>
+              </div>
+            </div>
+            <div class="hero-actions">
+              <a class="btn btn-ghost" href="/">대시보드로</a>
+              <a class="btn btn-success" href="/labs/lab1-login.html">실습 시작</a>
+            </div>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="guide-grid">
+        <article class="guide-card">
+          <h3>1. SQL Injection이란?</h3>
+          <p>사용자 입력이 SQL 문장에 직접 결합될 때, 원래 의도하지 않은 쿼리 구조가 실행되는 취약점입니다.</p>
+          <p>애플리케이션이 문자열을 이어 붙여 쿼리를 만들면, 입력값이 데이터가 아니라 SQL 문법 일부로 해석될 수 있습니다.</p>
+        </article>
+
+        <article class="guide-card">
+          <h3>2. SQL 기초 문법 복습</h3>
+          <p><code>SELECT</code> 는 조회, <code>WHERE</code> 는 조건, <code>UNION</code> 은 결과 합치기, <code>ORDER BY</code> 는 정렬입니다.</p>
+          <pre class="code-block"><code>SELECT id, name
+FROM products
+WHERE category = 'electronics'
+ORDER BY id DESC;</code></pre>
+        </article>
+
+        <article class="guide-card">
+          <h3>3. 인젝션 유형 분류</h3>
+          <ul>
+            <li>In-band: 응답 본문에 결과가 바로 보이는 방식</li>
+            <li>Blind: 참/거짓, 시간 차이처럼 간접 신호로 추론하는 방식</li>
+            <li>Out-of-band: DNS, HTTP 등 외부 채널을 통해 유출하는 방식</li>
+          </ul>
+        </article>
+
+        <article class="guide-card">
+          <h3>4. SQLite 특이사항</h3>
+          <p>SQLite는 파일 기반 DB라 설치가 간단하고, 메타데이터는 <code>sqlite_master</code> 테이블에서 확인할 수 있습니다.</p>
+          <p>DBMS마다 함수 이름과 문자열 처리 방식이 다르므로, 페이로드는 사용 중인 엔진에 맞춰 조정해야 합니다.</p>
+        </article>
+
+        <article class="guide-card">
+          <h3>5. 방어 기법</h3>
+          <ul>
+            <li>Prepared Statement 사용</li>
+            <li>파라미터 바인딩으로 입력과 쿼리 구조 분리</li>
+            <li>ORM 사용 시에도 raw query 남용 금지</li>
+            <li>에러 메시지 최소화와 로깅 분리</li>
+          </ul>
+        </article>
+
+        <article class="guide-card">
+          <h3>6. 윤리적 해킹</h3>
+          <p>허가받지 않은 시스템에 대한 공격 시도는 불법입니다. 교육, 연구, 모의훈련처럼 명확히 승인된 범위에서만 테스트해야 합니다.</p>
+          <p>재현 환경, 책임 범위, 보고 절차를 사전에 정의하는 것이 기본입니다.</p>
+        </article>
+      </section>
+
+      <section class="panel" style="margin: 24px 0 36px;">
+        <h2 class="panel-title">실습 연결 포인트</h2>
+        <p class="panel-subtitle">이 사이트의 7개 Lab은 아래 흐름으로 난이도가 올라갑니다.</p>
+        <div class="pill-row">
+          <span class="pill">로그인 우회</span>
+          <span class="pill">UNION 추출</span>
+          <span class="pill">Blind Boolean</span>
+          <span class="pill">Error 기반</span>
+          <span class="pill">Time 기반</span>
+          <span class="pill">Stacked Queries</span>
+          <span class="pill">WAF 우회</span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container footer-note">
+      이론 이해 후에는 각 Lab의 SQL 시각화 영역을 보면서 입력값이 실제 쿼리로 어떻게 변하는지 비교해 보세요.
+    </footer>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

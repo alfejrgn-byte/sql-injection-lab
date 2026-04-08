@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 5: Time 기반 Blind — SQLi Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 5: Time 기반 Blind <span class="difficulty">★★★★☆</span></h1>
+              <p class="hero-copy">응답 본문이 같더라도 시간을 보면 내부 조건의 참/거짓을 구분할 수 있습니다.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="5">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">
+          응답 내용은 항상 동일합니다. 응답 시간 차이로 데이터를 추출하세요. <code>delay_if_true:</code> 뒤에 SQL
+          조건을 넣어보세요.
+        </p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">일반 ID 조회처럼 보이지만, 특정 접두사를 사용하면 서버가 조건식의 참/거짓에 따라 지연합니다.</p>
+
+          <form id="timeForm" class="field-grid">
+            <div class="field">
+              <label for="requestId">ID</label>
+              <input id="requestId" name="requestId" type="text" value="1" autocomplete="off" />
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">확인</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">본문 메시지는 바뀌지 않습니다. 응답 시간과 막대 길이만 집중해서 보세요.</p>
+          <div class="result-area">
+            <div id="resultMessage" class="empty-state">아직 요청을 보내지 않았습니다.</div>
+            <div class="response-time-box metric-card">
+              <div class="meta-label">응답 시간</div>
+              <strong id="responseTimeValue">0ms</strong>
+              <p id="responseTimeHint" class="panel-subtitle" style="margin: 12px 0 0;">
+                2000ms 이상이면 조건이 참일 가능성이 높습니다.
+              </p>
+            </div>
+            <div class="response-meter" aria-label="응답 시간 시각화">
+              <div id="responseMeterFill" class="response-meter-fill"></div>
+            </div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">응답 시간 기반 추론이 끝났다면 FLAG를 제출하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 5;
+        const form = document.getElementById("timeForm");
+        const requestIdInput = document.getElementById("requestId");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const resultMessage = document.getElementById("resultMessage");
+        const responseTimeValue = document.getElementById("responseTimeValue");
+        const responseTimeHint = document.getElementById("responseTimeHint");
+        const responseMeterFill = document.getElementById("responseMeterFill");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+
+        function updateSql(queryOverride) {
+          const value = requestIdInput.value;
+
+          if (queryOverride) {
+            const highlightedValue = value.startsWith("delay_if_true:")
+              ? value.slice("delay_if_true:".length)
+              : value;
+            sqlDisplay.innerHTML = highlightSQL(queryOverride, highlightedValue);
+            return;
+          }
+
+          if (value.startsWith("delay_if_true:")) {
+            const condition = value.slice("delay_if_true:".length) || "0";
+            const query = `SELECT CASE WHEN (${condition}) THEN 1 ELSE 0 END AS should_delay`;
+            sqlDisplay.innerHTML = highlightSQL(query, condition);
+            return;
+          }
+
+          const query = `SELECT id FROM orders WHERE id=${value}`;
+          sqlDisplay.innerHTML = highlightSQL(query, value);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        function getErrorMessage(response) {
+          if (response.error === true) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          if (typeof response.error === "string" && response.error) {
+            return response.error;
+          }
+
+          if (response._ok === false) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          return "";
+        }
+
+        function renderResponseTime(response) {
+          const clientTime = Number(response._responseTime || 0);
+          const serverTime = Number(response.responseTime || 0);
+          const displayTime = clientTime > 0 ? clientTime : serverTime;
+          const width = Math.min(Math.max((displayTime / 2000) * 100, 4), 100);
+          const isSlow = displayTime >= 2000;
+
+          responseTimeValue.textContent = `${displayTime}ms`;
+          responseMeterFill.style.width = `${width}%`;
+          responseMeterFill.classList.toggle("slow", isSlow);
+          responseTimeHint.textContent = isSlow
+            ? "2000ms 이상 응답입니다. 조건이 참일 가능성이 높습니다."
+            : "2000ms 미만 응답입니다. 조건이 거짓일 가능성이 높습니다.";
+
+          if (serverTime > 0 && Math.abs(serverTime - displayTime) > 20) {
+            responseTimeHint.textContent += ` 서버 측정: ${serverTime}ms`;
+          }
+        }
+
+        async function runCheck() {
+          const requestId = requestIdInput.value;
+          const response = await apiCall(`/api/lab5-time?id=${encodeURIComponent(requestId)}`);
+          const errorMessage = getErrorMessage(response);
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+          renderResponseTime(response);
+
+          if (errorMessage) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = errorMessage;
+            return;
+          }
+
+          resultMessage.className = "notice-box";
+          resultMessage.textContent = response.message || "요청 처리됨";
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await runCheck();
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        requestIdInput.addEventListener("input", () => updateSql());
+
+        initHints(labId);
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+        runCheck();
+      });
+    </script>
+  </body>
+</html>

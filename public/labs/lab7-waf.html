@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 7: WAF 우회 — SQLi Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/lab.css" />
+  </head>
+  <body>
+    <div class="education-banner">
+      이 사이트는 교육 목적으로 제작된 의도적 취약 환경입니다. 실제 시스템에 대한 공격은 불법입니다.
+    </div>
+
+    <header class="site-header compact">
+      <div class="container">
+        <section class="hero-panel">
+          <div class="header-row">
+            <div>
+              <a class="back-link" href="/">← 대시보드로 돌아가기</a>
+              <h1 style="margin-top: 12px;">Lab 7: WAF 우회 <span class="difficulty">★★★★★</span></h1>
+              <p class="hero-copy">난이도별 필터 규칙을 파악하고, 차단당하지 않는 형태로 검색 쿼리를 변형해 보세요.</p>
+            </div>
+            <span class="status-badge pending" data-lab-badge="7">미완료</span>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="mission-box">
+        <strong>미션</strong>
+        <p style="margin: 8px 0 0;">WAF 필터가 특정 SQL 키워드를 차단합니다. 필터를 우회하여 데이터를 추출하세요.</p>
+      </section>
+
+      <div class="lab-layout">
+        <section class="panel">
+          <h2 class="panel-title">입력</h2>
+          <p class="panel-subtitle">검색어는 사용자명과 이메일에 동시에 반영됩니다. 난이도에 따라 필터 규칙이 달라집니다.</p>
+
+          <form id="wafForm" class="field-grid two">
+            <div class="field">
+              <label for="search">검색어</label>
+              <input id="search" name="search" type="text" placeholder="username 또는 payload" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="difficulty">WAF 난이도</label>
+              <select id="difficulty" name="difficulty">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button class="btn" type="submit">검색</button>
+            </div>
+          </form>
+
+          <div class="sql-display" id="sqlDisplay"></div>
+
+          <div id="wafRuleList" class="result-stack" style="margin-top: 16px;"></div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">결과</h2>
+          <p class="panel-subtitle">차단되면 WAF 경고가, 통과하면 사용자 검색 결과가 표시됩니다.</p>
+          <div class="result-area">
+            <div id="resultMessage" class="empty-state">기본 검색 결과를 불러오는 중입니다.</div>
+            <div class="query-meta" id="queryMeta">실행 쿼리는 여기에 표시됩니다.</div>
+            <div id="resultTable"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel hint-section">
+        <h2 class="panel-title">힌트</h2>
+        <div id="hintContainer"></div>
+      </section>
+
+      <section class="panel flag-section">
+        <h2 class="panel-title">FLAG 입력</h2>
+        <p class="panel-subtitle">필터를 우회해 원하는 데이터를 찾았다면 FLAG를 제출하세요.</p>
+        <form id="flagForm" class="flag-form">
+          <input id="flagInput" type="text" placeholder="FLAG{...}" autocomplete="off" />
+          <button class="btn btn-success" type="submit">FLAG 확인</button>
+        </form>
+        <p id="flagFeedback" class="flag-feedback"></p>
+        <p id="savedFlag" class="saved-flag"></p>
+      </section>
+    </main>
+
+    <canvas id="confettiCanvas" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <script src="/js/db-client.js"></script>
+    <script src="/js/api-router.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/hint.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const labId = 7;
+        const form = document.getElementById("wafForm");
+        const searchInput = document.getElementById("search");
+        const difficultySelect = document.getElementById("difficulty");
+        const sqlDisplay = document.getElementById("sqlDisplay");
+        const wafRuleList = document.getElementById("wafRuleList");
+        const resultMessage = document.getElementById("resultMessage");
+        const resultTable = document.getElementById("resultTable");
+        const queryMeta = document.getElementById("queryMeta");
+        const flagForm = document.getElementById("flagForm");
+        const flagInput = document.getElementById("flagInput");
+        const flagFeedback = document.getElementById("flagFeedback");
+        const savedFlag = document.getElementById("savedFlag");
+        const WAF_RULES = {
+          low: {
+            title: "Low",
+            description: "대소문자를 구분하는 단순 문자열 차단입니다. 예: UNION 은 막히지만 union 은 통과할 수 있습니다."
+          },
+          medium: {
+            title: "Medium",
+            description: "대소문자를 무시하는 문자열 차단입니다. union, UNION, UnIoN 모두 같은 키워드로 판단합니다."
+          },
+          high: {
+            title: "High",
+            description: "정규식 기반 차단과 이중 키워드 검사를 함께 사용합니다. 따옴표, 주석, 일부 함수도 막힙니다."
+          }
+        };
+
+        function updateSql(queryOverride) {
+          const search = searchInput.value;
+          const query =
+            queryOverride ||
+            `SELECT id, username, email, role FROM users WHERE username LIKE '%${search}%' OR email LIKE '%${search}%'`;
+          sqlDisplay.innerHTML = highlightSQL(query, search);
+        }
+
+        function refreshSavedFlag() {
+          const saved = getSavedFlag(labId);
+          savedFlag.textContent = saved ? `저장된 FLAG: ${saved}` : "";
+        }
+
+        function setFlagFeedback(message, type) {
+          flagFeedback.textContent = message;
+          flagFeedback.style.color = type === "success" ? "#7ee787" : "#f85149";
+        }
+
+        function renderWafRules() {
+          const currentDifficulty = difficultySelect.value;
+
+          wafRuleList.innerHTML = Object.entries(WAF_RULES)
+            .map(
+              ([difficulty, rule]) => `
+                <div class="${difficulty === currentDifficulty ? "notice-box warning" : "notice-box"}">
+                  <strong>${rule.title}</strong>
+                  <p style="margin: 8px 0 0;">${rule.description}</p>
+                </div>
+              `
+            )
+            .join("");
+        }
+
+        function getErrorMessage(response) {
+          if (response.blocked) {
+            return "";
+          }
+
+          if (response.error === true) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          if (typeof response.error === "string" && response.error) {
+            return response.error;
+          }
+
+          if (response._ok === false) {
+            return response.message || "요청 처리 중 오류가 발생했습니다.";
+          }
+
+          return "";
+        }
+
+        function maybeRevealFlag(payload) {
+          const match = JSON.stringify(payload || {}).match(/FLAG\{[^}]+\}/);
+
+          if (match) {
+            showFlagModal(match[0], labId);
+            refreshSavedFlag();
+          }
+        }
+
+        async function runSearch() {
+          const search = searchInput.value;
+          const difficulty = difficultySelect.value;
+          const response = await apiCall(
+            `/api/lab7-waf?search=${encodeURIComponent(search)}&difficulty=${encodeURIComponent(difficulty)}`
+          );
+          const errorMessage = getErrorMessage(response);
+
+          updateSql(response.executedQuery);
+          queryMeta.textContent = response.executedQuery || "실행 쿼리를 확인할 수 없습니다.";
+
+          if (response.blocked) {
+            resultMessage.className = "blocked-box";
+            resultMessage.textContent = `WAF가 요청을 차단했습니다. ${response.message || ""}`.trim();
+            resultTable.innerHTML = "";
+            return;
+          }
+
+          if (errorMessage) {
+            resultMessage.className = "error-box";
+            resultMessage.textContent = errorMessage;
+            resultTable.innerHTML = "";
+            return;
+          }
+
+          const rows = response.rows || [];
+          resultMessage.className = rows.length ? "success-box" : "notice-box warning";
+          resultMessage.textContent = rows.length
+            ? `${rows.length}명의 사용자가 검색되었습니다.`
+            : "검색 조건에 맞는 사용자가 없습니다.";
+          renderTable(rows, resultTable);
+          maybeRevealFlag(response);
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await runSearch();
+        });
+
+        flagForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (checkFlag(labId, flagInput.value)) {
+            setFlagFeedback("정답입니다. 진행률이 저장되었습니다.", "success");
+            showFlagModal(flagInput.value, labId);
+            refreshSavedFlag();
+          } else {
+            setFlagFeedback("FLAG가 올바르지 않습니다.", "error");
+          }
+        });
+
+        searchInput.addEventListener("input", () => updateSql());
+        difficultySelect.addEventListener("change", () => {
+          renderWafRules();
+          updateSql();
+        });
+
+        initHints(labId);
+        renderWafRules();
+        updateSql();
+        refreshSavedFlag();
+        updateProgress();
+        runSearch();
+      });
+    </script>
+  </body>
+</html>
