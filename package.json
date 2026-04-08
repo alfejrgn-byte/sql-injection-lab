@@ -1,0 +1,9 @@
+{
+  "name": "sql-injection-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "교육용 SQL Injection 실습 웹사이트",
+  "dependencies": {
+    "sql.js": "^1.10.0"
+  }
+}
